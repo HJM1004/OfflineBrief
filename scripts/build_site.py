@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""content/ 内の最新日付フォルダのMarkdownからオフラインPWAサイトを public/ に生成する。
+"""content/ 内の直近日付フォルダのMarkdownからオフラインPWAサイトを public/ に生成する。
 
 依存パッケージなし(Python標準ライブラリのみ)。
 
@@ -24,6 +24,9 @@
     解説本文...
 
 slug が essays のファイルは「知的探究」タブになり、各セクションがエッセイとして表示される。
+
+サイトには content/ 内の全日付フォルダ(MAX_DAYS_IN_BUILDで上限を設けた場合はその範囲)が
+同梱され、ヘッダーの日付セレクタで切り替えて閲覧できる。
 """
 import html
 import json
@@ -35,6 +38,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PUBLIC = ROOT / "public"
 CONTENT = ROOT / "content"
+
+# サイトに直接組み込む過去日数の上限。None なら content/ 内の全日付を含める(既定)。
+# ページサイズ・読み込み時間が気になってきたら整数(例: 30)に変更して直近N日分に絞れる。
+# その場合、上限を超える古い日付はビューアーの「mdファイルを読み込む」機能で個別に読み込める。
+MAX_DAYS_IN_BUILD = None
 
 
 def esc(s):
@@ -154,6 +162,11 @@ def parse_file(path: Path):
             for i, b in enumerate(blocks)]
 
 
+def day_option_label(day: str) -> str:
+    y, m, d = day.split("-")
+    return f"{y}年{int(m)}月{int(d)}日"
+
+
 CSS = """
 :root{--bg:#faf8f4;--card:#ffffff;--ink:#1e2430;--sub:#5c6470;--accent:#0f4c81;--accent2:#b3541e;--line:#e5e0d8;--tag:#eef3f8}
 @media(prefers-color-scheme:dark){:root{--bg:#14171c;--card:#1d2129;--ink:#e8e6e1;--sub:#9aa2ad;--accent:#7fb3e0;--accent2:#e0956a;--line:#2c313a;--tag:#242b35}}
@@ -183,8 +196,10 @@ article p,article ul{font-size:.92rem;margin:8px 0}
 footer{text-align:center;color:var(--sub);font-size:.75rem;padding:24px 16px 40px}
 .offline-badge{display:none;background:var(--accent2);color:#fff;text-align:center;font-size:.75rem;padding:4px}
 body.offline .offline-badge{display:block}
-header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+header{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
 header .headtext{flex:1 1 auto;min-width:0}
+.day-select{flex:0 0 auto;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.5);border-radius:8px;padding:8px 10px;font-size:.78rem;font-weight:600}
+.day-select option{color:#1e2430}
 .load-btn{flex:0 0 auto;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.5);border-radius:8px;padding:8px 12px;font-size:.78rem;font-weight:600;cursor:pointer;white-space:nowrap}
 .load-btn:active{background:rgba(255,255,255,.3)}
 .loaded-tag{display:inline-block;font-size:.7rem;color:var(--accent2);border:1px solid var(--accent2);border-radius:4px;padding:1px 6px;margin-left:8px;vertical-align:middle}
@@ -202,10 +217,35 @@ function bindNav(){
     a.onclick = (e)=>{e.preventDefault();show(a.dataset.slug)};
   });
 }
+function showDay(day, preferredSlug){
+  if(!day) return;
+  document.querySelectorAll('nav a').forEach(a=>{
+    a.style.display = (a.dataset.day===day) ? '' : 'none';
+  });
+  try{localStorage.setItem('activeDay',day)}catch(e){}
+  const sel = document.getElementById('daySelect');
+  if(sel && sel.value!==day) sel.value = day;
+  let slug = preferredSlug;
+  const candidate = slug && document.querySelector('nav a[data-slug="'+slug+'"][data-day="'+day+'"]');
+  if(!candidate){
+    const first = document.querySelector('nav a[data-day="'+day+'"]');
+    slug = first ? first.dataset.slug : null;
+  }
+  if(slug) show(slug);
+}
+function bindDaySelect(){
+  const sel = document.getElementById('daySelect');
+  if(sel) sel.addEventListener('change', ()=>showDay(sel.value));
+}
 bindNav();
-let init='';try{init=localStorage.getItem('tab')||''}catch(e){}
-if(!document.getElementById(init)) init=document.querySelector('section').id;
-show(init);
+bindDaySelect();
+let initDay='';try{initDay=localStorage.getItem('activeDay')||''}catch(e){}
+if(!document.querySelector('nav a[data-day="'+initDay+'"]')){
+  const firstOpt = document.querySelector('#daySelect option');
+  initDay = firstOpt ? firstOpt.value : '';
+}
+let initTab='';try{initTab=localStorage.getItem('tab')||''}catch(e){}
+showDay(initDay, initTab);
 function updateNet(){document.body.classList.toggle('offline',!navigator.onLine)}
 window.addEventListener('online',updateNet);window.addEventListener('offline',updateNet);updateNet();
 if('serviceWorker' in navigator){navigator.serviceWorker.register('./sw.js')}
@@ -307,7 +347,7 @@ function essaysSectionHtml(g){
   }).join('');
   return '<section id="'+esc(g.slug)+'">'+blocks+'</section>';
 }
-function insertNavTab(g){
+function insertNavTab(g, dayGroupKey){
   const nav = document.querySelector('nav');
   let a = nav.querySelector('a[data-slug="'+g.slug+'"]');
   if(!a){
@@ -317,6 +357,7 @@ function insertNavTab(g){
   }
   a.dataset.slug = g.slug;
   a.dataset.order = g.order;
+  a.dataset.day = dayGroupKey;
   a.innerHTML = esc(g.genre) + '<span class="loaded-tag">読込</span>';
   const tabs = Array.from(nav.querySelectorAll('a'));
   tabs.sort((x,y)=>(parseInt(x.dataset.order||'50',10) - parseInt(y.dataset.order||'50',10)));
@@ -337,25 +378,37 @@ function dayKeyFromName(name){
   const m = (name||'').match(/(\d{4}-\d{2}-\d{2})/);
   return m ? m[1] : '';
 }
-function dayLabel(dayKey){
-  return dayKey ? dayKey.slice(5).replace('-','/') : '';
+function dayOptionLabel(dayKey){
+  if(!dayKey) return '読み込んだファイル';
+  const parts = dayKey.split('-');
+  return parts[0]+'年'+parseInt(parts[1],10)+'月'+parseInt(parts[2],10)+'日';
 }
-function applyDayNamespace(g, dayKey){
-  const isEssays = (g.slug === 'essays');
-  if(dayKey){
-    g.slug = g.slug + '__' + dayKey;
-    g.genre = g.genre + '(' + dayLabel(dayKey) + ')';
+function ensureDayOption(dayKey){
+  const key = dayKey || '__loaded__';
+  const sel = document.getElementById('daySelect');
+  if(sel && !sel.querySelector('option[value="'+key+'"]')){
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = dayOptionLabel(dayKey);
+    sel.insertBefore(opt, sel.firstChild);
   }
+  return key;
+}
+function namespaceSlug(g, dayGroupKey){
+  const isEssays = (g.slug === 'essays');
+  g.slug = g.slug + '__' + dayGroupKey;
   return isEssays;
 }
 function renderOneBlock(block, fallbackName, dayKey){
   const g = parseMdText(block, fallbackName);
-  const isEssays = applyDayNamespace(g, dayKey);
+  const dayGroupKey = dayKey || '__loaded__';
+  const isEssays = namespaceSlug(g, dayGroupKey);
   const html = isEssays ? essaysSectionHtml(g) : genreSectionHtml(g);
   const old = document.getElementById(g.slug);
   if(old) old.remove();
   document.querySelector('main').insertAdjacentHTML('beforeend', html);
-  insertNavTab(g);
+  ensureDayOption(dayKey);
+  insertNavTab(g, dayGroupKey);
   try{
     localStorage.setItem('offlinebrief_loaded_'+g.slug, JSON.stringify({dayKey: dayKey||'', block}));
     const idxRaw = localStorage.getItem('offlinebrief_loaded_index');
@@ -363,17 +416,17 @@ function renderOneBlock(block, fallbackName, dayKey){
     if(!idx.includes(g.slug)) idx.push(g.slug);
     localStorage.setItem('offlinebrief_loaded_index', JSON.stringify(idx));
   }catch(e){}
-  return g.slug;
+  return {slug: g.slug, day: dayGroupKey};
 }
 function renderLoadedFile(text, filenameFallback){
   const dayKey = dayKeyFromName(filenameFallback);
   const blocks = splitGenreBlocks(text);
-  let firstSlug = null;
+  let first = null;
   blocks.forEach((block, i)=>{
-    const slug = renderOneBlock(block, i ? filenameFallback+'_'+i : filenameFallback, dayKey);
-    if(firstSlug===null) firstSlug = slug;
+    const res = renderOneBlock(block, i ? filenameFallback+'_'+i : filenameFallback, dayKey);
+    if(first===null) first = res;
   });
-  if(firstSlug) show(firstSlug);
+  if(first) showDay(first.day, first.slug);
 }
 function restoreLoadedFiles(){
   try{
@@ -389,12 +442,14 @@ function restoreLoadedFiles(){
         if(parsed && typeof parsed==='object' && 'block' in parsed){ dayKey = parsed.dayKey||''; block = parsed.block; }
       }catch(e){}
       const g = parseMdText(block, key);
-      const isEssays = applyDayNamespace(g, dayKey);
+      const dayGroupKey = dayKey || '__loaded__';
+      const isEssays = namespaceSlug(g, dayGroupKey);
       const html = isEssays ? essaysSectionHtml(g) : genreSectionHtml(g);
       const old = document.getElementById(g.slug);
       if(old) old.remove();
       document.querySelector('main').insertAdjacentHTML('beforeend', html);
-      insertNavTab(g);
+      ensureDayOption(dayKey);
+      insertNavTab(g, dayGroupKey);
     }
   }catch(e){}
 }
@@ -456,25 +511,45 @@ def main():
                         and re.match(r"\d{4}-\d{2}-\d{2}$", d.name)])
     if not date_dirs:
         raise SystemExit("[error] content/YYYY-MM-DD/ フォルダがありません")
-    latest = date_dirs[-1]
-    print(f"[build] {latest.name} のコンテンツを使用")
 
-    parsed = []
-    for p in sorted(latest.glob("*.md")):
-        parsed.extend(parse_file(p))
-    parsed.sort(key=lambda g: g["order"])
-    if not parsed:
-        raise SystemExit(f"[error] {latest} に .md がありません")
+    # 新しい日付順(降順)に並べ、MAX_DAYS_IN_BUILDが設定されていればその日数分だけに絞る
+    # (Noneなら [:None] は全件を意味するのでスライスはそのまま全日付を返す)
+    build_dirs = list(reversed(date_dirs))[:MAX_DAYS_IN_BUILD]
+
+    day_options = []
+    nav, sections = [], []
+    latest_name = None
+
+    for day_dir in build_dirs:
+        day = day_dir.name
+        parsed = []
+        for p in sorted(day_dir.glob("*.md")):
+            parsed.extend(parse_file(p))
+        parsed.sort(key=lambda g: g["order"])
+        if not parsed:
+            continue
+
+        if latest_name is None:
+            latest_name = day
+        day_options.append(f'<option value="{day}">{esc(day_option_label(day))}</option>')
+
+        for g in parsed:
+            day_slug = f'{g["slug"]}__{day}'
+            nav.append(
+                f'<a href="#" data-slug="{esc(day_slug)}" data-order="{g["order"]}" '
+                f'data-day="{day}">{esc(g["genre"])}</a>'
+            )
+            g_for_html = dict(g, slug=day_slug)
+            sections.append(essays_section_html(g_for_html) if g["slug"] == "essays"
+                            else genre_section_html(g_for_html))
+
+    if latest_name is None:
+        raise SystemExit("[error] content/YYYY-MM-DD/ 配下に有効な .md がありません")
+
+    print(f"[build] {latest_name} を最新として、直近{len(day_options)}日分を同梱")
 
     version = str(int(time.time()))
-    y, m, d = latest.name.split("-")
-    date_label = f"{y}年{int(m)}月{int(d)}日"
-
-    nav, sections = [], []
-    for g in parsed:
-        nav.append(f'<a href="#" data-slug="{esc(g["slug"])}" data-order="{g["order"]}">{esc(g["genre"])}</a>')
-        sections.append(essays_section_html(g) if g["slug"] == "essays"
-                        else genre_section_html(g))
+    date_label = day_option_label(latest_name)
 
     page = f"""<!DOCTYPE html>
 <html lang="ja">
@@ -491,6 +566,7 @@ def main():
 <div class="offline-badge">オフライン閲覧中(キャッシュ済み)</div>
 <header>
 <div class="headtext"><h1>✈ 機内ブリーフ</h1><div class="date">{esc(date_label)}版</div></div>
+<select id="daySelect" class="day-select">{''.join(day_options)}</select>
 <button id="loadMdBtn" class="load-btn" type="button">📄 mdファイルを読み込む(複数日OK)</button>
 <input id="mdFileInput" type="file" accept=".md,text/markdown" multiple style="display:none">
 </header>
