@@ -1,28 +1,72 @@
 # OfflineBrief — Claudeへの作業指示
 
 このリポジトリは「機内でオフラインで読むニュースブリーフ」を生成・公開するためのもの。
-ユーザーが「今日のブリーフを作って」と言ったら、以下の手順で `content/` にMarkdownを生成する。
+ユーザーが「今日のブリーフを作って」と言ったら、以下の手順でニュースを調査・執筆し、
+Google Drive連携ツールで直接Google Driveに保存する。閲覧アプリ(`public/`)はその場でGAS
+Web AppにアクセスしてJSONを取得して表示するため、**Driveへの保存が完了した瞬間に
+閲覧アプリ側も自動的に最新版になる(ビルドやgit pushは不要)**。
 **外部APIは使わない。ニュース調査はWebSearch/web_fetchで、執筆はClaude自身が行う。**
+
+## 全体アーキテクチャ(2026年7月〜)
+
+以前はcontent/にMarkdownをコミットし、scripts/build_site.pyで全日付を1つの静的HTMLにビルドし、
+git push→GitHub Actions→GitHub Pagesという流れだった。現在は以下の構成に移行している。
+
+- **データ層**: Claudeが「Google Drive連携ツール」(create_file等)を使い、当日分のMarkdownを
+  `OfflineBrief/YYYY-MM-DD/YYYY-MM-DD_partNofM.md`(約45,000バイトごとの分割ファイル、詳細は
+  下記「手順」参照)として直接Google Driveに保存する。
+  **重要**: ClaudeのbashサンドボックスからはGoogle系ドメイン(script.google.com含む)への
+  ネットワークアクセスがプロキシで遮断されており、curlでGAS Web Appへ直接POSTすることは
+  できない。そのためデータの書き込みは必ずDrive連携ツール経由で行うこと(bashのcurlでは不可)。
+  また1ファイルにまとめて送ろうとすると出力トークン上限を超えるため、必ず分割アップロードする。
+- **配信層**: Google Apps Script Web App(`scripts/gas/Code.gs`、ユーザーがscript.google.com
+  にデプロイ済み・読み取り専用)が、`doGet`リクエストに応じて上記Markdownをオンデマンドで
+  解析し構造化JSONとして返す。書き込み(doPost)は行わない設計。
+- **閲覧アプリ層**: `public/`(GitHub Pagesで公開)は薄いPWAシェルで、ページを開くたびにGAS Web App
+  のURLへfetchし、日付一覧と選択中の日のJSONを取得して描画する。取得結果はブラウザのCache
+  Storage APIにも保存されるため、一度オンラインで開いておけば、その後は機内などオフラインでも
+  キャッシュされた内容を読める。
+- **git/GitHub Pagesの役割**: 閲覧アプリのコード(`public/`)とGASスクリプトのソース
+  (`scripts/gas/`)の管理のみ。**日々のニュースデータはgitにコミットしない**(Drive連携ツール経由で
+  直接Driveに保存されるため)。`public/`が変わったとき(閲覧アプリの改修時)だけ
+  `git add -A && git commit`し、pushはユーザーが行う。
+
+GAS Web AppのURLは `.env`(gitignore済み、リポジトリ直下)に `GAS_WEB_APP_URL=...` の形で
+保存されている想定。無ければユーザーに `scripts/gas/DEPLOY.md` の手順でデプロイしてもらい、
+値を教えてもらうこと。**ユーザーから伝えられたURLが `script.googleusercontent.com/macros/echo?...`
+という長いURLだった場合、それはブラウザがリダイレクトした後の値であり誤り。
+`https://script.google.com/macros/s/.../exec` 形式の値を再度確認してもらうこと。**
 
 ## 手順
 
-1. 今日の日付で `content/YYYY-MM-DD/` フォルダを作る
-2. 各ジャンルのニュースをWeb検索で調査する(下記ジャンル構成)。長時間フライトでも読み応えがあるよう、総合・国際・経済・ビジネス・政治・行政・テック・科学・インフラ・都市・建築・環境の主要ジャンルは1ジャンルあたり約10本。インドネシア・タイ・マレーシア・東南アジア・ヨーロッパ・アメリカの国・地域別ジャンルは、その日実際に見つかるニュース量に応じて5〜10本程度でよい(本数を埋めるための無理な水増しはしない)。ジャンル数が多いため、Agentツールで複数ジャンルを分担させ並列調査すると効率的。並列実行後は、各ジャンルのファイル内容を実際に読み直し、見出し数などが期待通りかを検証してからコミットに進むこと(サブエージェントの完了報告を鵜呑みにしない)
-3. 全ジャンルを **1つの `brief.md`** にまとめて書く(形式は下記)。ジャンルごとに `---\ngenre:...\n---` のfrontmatterブロックを連結し、1ファイルにする(読み込み・配布のしやすさのため複数ファイルには分けない)。事実は検索結果に基づき、出典URLを必ず付ける。推測は推測と明示
-4. 同じ `brief.md` の末尾に「知的探究エッセイ」ブロック(`genre: 知的探究` / `slug: essays` / `order: 15`)を追加し、2〜3本書く。当日のニュースを入口に、歴史・科学・経済学・技術・都市論などへ思考を広げる約2000字の読み物。末尾に「さらに探究するには」としてキーワード・書籍を3〜5個
-5. `python scripts/build_site.py` でビルドし、エラーがないこと・`public/index.html` に全セクションが含まれることを確認
-6. `git add -A && git commit` する(pushはユーザーが行う)
-7. 当日の `content/YYYY-MM-DD/brief.md` をGoogle Driveの `OfflineBrief/YYYY-MM-DD/` フォルダに、**ファイル名を `YYYY-MM-DD.md`(日付を含む名前)にリネームしてアップロード**する(`disable_conversion_to_google_type: true` を指定し、Googleドキュメントに変換されないよう .md のまま保存する)。日付をファイル名に含めるのは、ビューアーの複数日読み込み機能がファイル名から日付を抽出するため(下記参照)。Driveに保存すれば十分読めるため、メール送信は行わない
+1. 各ジャンルのニュースをWeb検索で調査する(下記ジャンル構成)。長時間フライトでも読み応えがあるよう、総合・国際・経済・ビジネス・政治・行政・テック・科学・インフラ・都市・建築・環境の主要ジャンルは1ジャンルあたり約10本。インドネシア・タイ・マレーシア・東南アジア・ヨーロッパ・アメリカの国・地域別ジャンルは、その日実際に見つかるニュース量に応じて5〜10本程度でよい(本数を埋めるための無理な水増しはしない)。ジャンル数が多いため、Agentツールで複数ジャンルを分担させ並列調査すると効率的。並列実行後は、各ジャンルのファイル内容を実際に読み直し、見出し数などが期待通りかを検証してから次に進むこと(サブエージェントの完了報告を鵜呑みにしない)
+2. 全ジャンルを **1つのMarkdown文字列**にまとめる(形式は下記)。ジャンルごとに `---\ngenre:...\n---` のfrontmatterブロックを連結する。事実は検索結果に基づき、出典URLを必ず付ける。推測は推測と明示
+3. 同じMarkdownの末尾に「知的探究エッセイ」ブロック(`genre: 知的探究` / `slug: essays` / `order: 15`)を追加し、2〜3本書く。当日のニュースを入口に、歴史・科学・経済学・技術・都市論などへ思考を広げる約2000字の読み物。末尾に「さらに探究するには」としてキーワード・書籍を3〜5個
+4. 作業用の一時ファイル(例: 作業ディレクトリの `brief.md`)にこのMarkdownを書き出し、見出し数・ジャンル数が期待通りかを実際に読み直して検証する
+5. Google Drive連携ツール(`create_file`等)で、`OfflineBrief/YYYY-MM-DD/` フォルダ(なければ作成)に保存する。**重要: 1ファイルでまとめて保存しようとしないこと。** 実際の日次ブリーフ(150〜235KB程度の日本語Markdown)を`create_file`1回で送ろうとすると、Claudeの1応答あたりの出力トークン上限(64,000)を超え、書き込みが途中で切れて不完全なファイルが複数できてしまう(2026-07-15に実際に発生した障害)。そのため必ず以下の手順で分割アップロードすること。
+   - まずbashで一時ファイル(`brief.md`)を1行ずつの改行境界を保ったまま約45,000バイトごとに分割する(例: Pythonで行単位に区切って結合し45,000バイトを超えたら次のパートに送る、といったスクリプトをその場で書いて実行する。ジャンルの区切りで割る必要はない、単純な行境界でよい)
+   - 分割した各パートを `OfflineBrief/YYYY-MM-DD/YYYY-MM-DD_partNofM.md` (Nは1始まりの連番、Mは合計パート数、例: `2026-07-14_part1of5.md`)という名前で`create_file`により1パートずつ順にアップロードする。`disable_conversion_to_google_type: true` を必ず指定する
+   - 各パートの`textContent`にはbashで分割したファイルの中身をそのまま渡す(Claudeが本文を新たに生成し直す必要はない。読み込んで渡すだけでも、tool呼び出しのパラメータとして出力する以上は出力トークンを消費するため、1パートは45,000バイト程度に収めること)
+   - GAS側(`Code.gs`)は同じ日付フォルダ内に`YYYY-MM-DD.md`という単一ファイルがあればそれを優先し、なければ`_partNofM.md`ファイル群をパート番号順に結合してから解析する設計になっている(後方互換のため単一ファイル方式もサポート)
+   - 同じ日付フォルダに古い失敗ファイル(中途半端な`YYYY-MM-DD.md`や、パート数の異なる`_partNofM.md`)が残っていると誤って読み込まれる可能性があるため、アップロード前にDrive上の対象フォルダを一覧し、紛らわしい古いファイルが残っていないか確認する。削除が必要な場合、Claude自身にはDriveのファイル削除ツールがないため、ユーザーに手動で削除してもらうよう依頼すること
+6. 検証として、GAS Web AppのURL(`.env`の`GAS_WEB_APP_URL`)に対し `?date=YYYY-MM-DD` を付けてWebFetchツールでアクセスし、投稿した内容が正しく解析されて取得できることを確認する。**bashのcurlはGoogle系ドメインに到達できないため使わないこと**。WebFetchでも失敗する場合は、ユーザーに直接ブラウザでURLを開いて確認してもらう
+7. `public/`や`scripts/gas/`のコードを変更した場合のみ `git add -A && git commit` する(pushはユーザーが行う)。日々のニュース投稿だけの場合はgit操作不要
 
-## ビューアーの日付切替・複数日閲覧の仕組み
+## 閲覧アプリの仕組み(public/)
 
-`scripts/build_site.py` は既定で `content/YYYY-MM-DD/` の**全日付フォルダ**をまとめてビルドし、1つの `public/index.html` に同梱する(`MAX_DAYS_IN_BUILD = None`)。ヘッダーの日付セレクタ(`<select id="daySelect">`)で日付を切り替えると、その日のジャンルタブ(`<nav>`)だけが表示される仕組み。各ジャンルのセクションIDは `スラッグ__YYYY-MM-DD`(例: `general__2026-07-06`)のように日付でユニーク化されており、ナブの各 `<a>` には `data-day` 属性が付与されている。日付フォルダが増えるほど `public/index.html` のファイルサイズと初回読み込み時間は増えていく点に留意(1日あたり目安150〜250KB)。ページサイズ・読み込み時間が気になってきたら `scripts/build_site.py` 冒頭の `MAX_DAYS_IN_BUILD` を整数(例: 30)に変更すると直近N日分だけに絞れる。その場合、上限を超える古い日付のフォルダは `content/` やGoogle Driveには残るが、ビルドには含まれなくなる。
+`public/index.html` はGAS Web AppのURL(`public/config.js`の`GAS_URL`)へ以下のようにアクセスする。
 
-`public/index.html` にはヘッダーに「📄 mdファイルを読み込む(複数日OK)」ボタンもあり、`<input type="file" multiple>` で1個または複数のmdファイル(Driveからダウンロードしたものなど、複数ジャンルが1ファイルに連結されたもの)を選択すると、ビルド時と同じ見た目でジャンルタブが追加される(ブラウザ側JSでmd→HTMLへ変換。`scripts/build_site.py` の `md_to_html`/`parse_file`/`split_genre_blocks` とロジックを揃えている)。1ファイルの中に複数の `---\ngenre:...\n---` ブロックが連結されていても、JS側の `splitGenreBlocks` で自動的に分割してそれぞれタブ化する。
+- パラメータなしでGET → `{"ok":true,"days":["2026-07-14","2026-07-09",...]}` のような日付一覧(降順)
+- `?date=YYYY-MM-DD` でGET → その日の構造化JSON(`{"ok":true,"date":..., "genres":[{genre,slug,order,overview,sections:[{title,meta,body},...]}]}`)
 
-**`MAX_DAYS_IN_BUILD` を設定していて、その上限より古い日付をさかのぼって見たい場合**は、この読み込み機能を使う。ファイル名に `YYYY-MM-DD` パターンが含まれる場合、JS側の `dayKeyFromName` がそれを抽出し、`ensureDayOption` が日付セレクタにその日付の選択肢を自動追加する(既にビルド組み込み済みの日付と同じ扱いになり、日付セレクタで行き来できる)。**ファイル名に日付が含まれない場合**は「読み込んだファイル」という特別グループとして扱われる。いずれの場合も読み込んだ内容はジャンルごとに `localStorage` に `{dayKey, block}` の形で保存され、次回起動時も `restoreLoadedFiles` で復元される。Driveへのアップロードや配布時はファイル名に必ず日付を含めること(手順7参照)。
+取得したJSONはクライアント側のJavaScript(`mdToHtml`/`genreSectionHtml`/`essaysSectionHtml`)でHTMLに変換して描画する。日付セレクタ(`<select id="daySelect">`)で日付を切り替えると、その日のJSONを都度fetchし直す。取得に成功するたびCache Storage API(`caches.open('offlinebrief-data-v1')`)に保存されるため、次回以降オフラインでも同じ日を開ける。Service Worker(`public/sw.js`)は同一オリジンのアプリ本体(HTML/JS/CSS/アイコン)だけをキャッシュし、GAS Web Appへのクロスオリジンfetchはページ側のCache Storage処理に任せる(役割を分離している)。
 
-ジャンルを追加・変更した場合は、Python側(`md_to_html`, `parse_block`, `split_genre_blocks`)とJS側(`mdToHtml`, `parseMdText`, `splitGenreBlocks`, `dayKeyFromName`, `namespaceSlug`, `showDay`, 各種 `*SectionHtml`)の**両方**を同じロジックに保つこと。
+## GASバックエンド(scripts/gas/) — 読み取り専用API
+
+- `Code.gs`: `doGet`のみを実装。`?date=YYYY-MM-DD`が指定されれば`OfflineBrief/YYYY-MM-DD/`内の`YYYY-MM-DD.md`(単一ファイル、あれば優先)または`YYYY-MM-DD_partNofM.md`群(パート番号順に結合)を読み込み、Markdownパーサ(`scripts/build_site.py`のロジックをJS移植したもの)でオンデマンドに解析してJSONを返す。パラメータなしなら`OfflineBrief`直下の`YYYY-MM-DD`形式サブフォルダを一覧して日付一覧を返す。書き込みエンドポイント(doPost)は持たない(Claudeの実行環境からGoogle系ドメインへのネットワークアクセスができないため、そもそも使えない)
+- `appsscript.json`: マニフェスト
+- `DEPLOY.md`: 初回デプロイ手順(ユーザーが実施済み)。`Code.gs`を修正した場合は「デプロイを管理→新バージョン」で再デプロイが必要(URLは変わらない)
+- `Code.gs`内の`ROOT_FOLDER_ID`(Driveの`OfflineBrief`フォルダID)は書き換え済みの想定
 
 ## ジャンル構成(ユーザーの関心)
 
@@ -44,11 +88,11 @@
 | 14 | environment | 環境 | 気候変動、脱炭素、再生可能エネルギー、環境政策・規制 |
 | 15 | essays | 知的探究 | エッセイ(上記ニュース派生) |
 
-ジャンル追加の要望があればこの表と `brief.md` 内のブロックを増やすだけでよい。国・地域別ジャンル(6〜11)は「その国・地域に関するニュース全般」を扱い、トピック別ジャンル(1〜5, 12〜14)は国内外を横断する話題を扱う、という住み分け。
+ジャンル追加の要望があればこの表を増やすだけでよい(Markdown側もブロックを追加するだけで、GAS・閲覧アプリ側の追加対応は不要)。国・地域別ジャンル(6〜11)は「その国・地域に関するニュース全般」を扱い、トピック別ジャンル(1〜5, 12〜14)は国内外を横断する話題を扱う、という住み分け。
 
 ## Markdown形式
 
-`content/YYYY-MM-DD/brief.md` は、下記フォーマットのブロックをジャンル数だけ連結した1ファイル。ブロックの区切りは「行頭の `---` の直後に `genre:` が続く箇所」で自動判定される(空行を1行挟んで連結すればよい)。
+1日分のMarkdownは、下記フォーマットのブロックをジャンル数だけ連結したもの。ブロックの区切りは「行頭の `---` の直後に `genre:` が続く箇所」で自動判定される(空行を1行挟んで連結すればよい)。この形式はGASの`Code.gs`が解析するため厳密に守ること。
 
 ```markdown
 ---
@@ -82,7 +126,7 @@ order: 2
 
 ## 注意
 
-- 古い日付のフォルダは残してよい(既定ではビルドは全日付を使用。`MAX_DAYS_IN_BUILD` を設定した場合はそれを超える古い分をビューアーの「mdファイルを読み込む」機能で個別に閲覧する)
-- `public/` と `data/` はコミットしない(.gitignore済み)
-- ビルドはPython標準ライブラリのみ。依存追加をしない
-- 過去バージョンとの互換性: `parse_file`/`splitGenreBlocks` は `---\ngenre:` ブロックが見つからない場合、ファイル全体を1ジャンルとして扱うため、1ジャンル1ファイルの古い形式のファイルが混在していても動作する
+- 過去分(2026-07-05〜2026-07-09)は`content/`にMarkdownとして残っている。`content/`はもうgit管理の対象外(.gitignore済み)。ローカルでの下書き・検証用の作業場所として使ってよいが、コミットはしない
+- `public/`は現在ビルド生成物ではなく手書きの閲覧アプリ本体なのでコミット対象(以前の`.gitignore`ルールから変更済み)
+- **bashのcurlはGoogle系ドメイン(script.google.com、googleapis.com等)に到達できない(プロキシのallowlistでブロックされている)。日々のデータ保存は必ずGoogle Drive連携ツール(create_file等)を使うこと。動作確認もbashのcurlではなくWebFetchツールを使う**
+- `scripts/build_site.py`と`.github/workflows/build-brief.yml`の旧ロジックは参考用として残っているが、日々の運用では使わない
