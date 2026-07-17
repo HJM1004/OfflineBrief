@@ -1,12 +1,18 @@
 name: 機内ブリーフ公開
 
+# GAS+Drive方式への移行後、public/ はビルド生成物ではなく手書きの閲覧アプリ本体
+# (GAS Web AppからJSONを取得して描画する薄いPWAシェル)になった。
+# そのためこのワークフローはもう build_site.py を実行せず、public/ をそのまま
+# GitHub Pagesにアップロードするだけでよい。public/ が変わったとき(閲覧アプリの
+# コード修正時)だけ実行される。日々のニュースデータ自体はGAS Web App経由で
+# Google Driveに保存され、閲覧アプリが実行時にfetchするため、この公開フローとは
+# 無関係に毎日自動更新される。
+
 on:
   push:
     branches: [main]
     paths:
-      - 'content/**'
-      - 'scripts/**'
-      - 'assets/**'
+      - 'public/**'
   workflow_dispatch:
 
 permissions:
@@ -19,28 +25,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: サイトビルド(標準ライブラリのみ・APIキー不要)
-        run: python scripts/build_site.py
-
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: public
-
   deploy:
-    needs: build
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
       - id: deployment
         uses: actions/deploy-pages@v4
