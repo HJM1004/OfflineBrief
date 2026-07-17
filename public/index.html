@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>機内ブリーフ</title>
+<meta name="theme-color" content="#0f4c81">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./icon-192.png">
+<style>
+:root{--bg:#faf8f4;--card:#ffffff;--ink:#1e2430;--sub:#5c6470;--accent:#0f4c81;--accent2:#b3541e;--line:#e5e0d8;--tag:#eef3f8}
+@media(prefers-color-scheme:dark){:root{--bg:#14171c;--card:#1d2129;--ink:#e8e6e1;--sub:#9aa2ad;--accent:#7fb3e0;--accent2:#e0956a;--line:#2c313a;--tag:#242b35}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Hiragino Sans","Yu Gothic",'Noto Sans JP',sans-serif;line-height:1.9;-webkit-text-size-adjust:100%}
+header{background:var(--accent);color:#fff;padding:20px 16px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+header .headtext{flex:1 1 auto;min-width:0}
+header h1{margin:0;font-size:1.25rem;letter-spacing:.06em}
+header .date{font-size:.8rem;opacity:.85;margin-top:2px}
+.day-select{flex:0 0 auto;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.5);border-radius:8px;padding:8px 10px;font-size:.78rem;font-weight:600}
+.day-select option{color:#1e2430}
+nav{position:sticky;top:0;background:var(--card);border-bottom:1px solid var(--line);display:flex;overflow-x:auto;z-index:10}
+nav a{flex:0 0 auto;padding:11px 14px;text-decoration:none;color:var(--sub);font-size:.85rem;font-weight:600;border-bottom:3px solid transparent;white-space:nowrap}
+nav a.active{color:var(--accent);border-bottom-color:var(--accent)}
+main{max-width:720px;margin:0 auto;padding:16px}
+section{display:none}section.active{display:block}
+.overview{background:var(--tag);border-left:4px solid var(--accent);padding:12px 14px;border-radius:0 8px 8px 0;font-size:.92rem;margin:14px 0 20px}
+article{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 18px 14px;margin-bottom:16px}
+article h2{font-size:1.05rem;margin:0 0 8px;line-height:1.6}
+article h3{font-size:.95rem;color:var(--accent2);margin:16px 0 4px}
+article p,article ul{font-size:.92rem;margin:8px 0}
+.meta{font-size:.75rem;color:var(--sub);margin-bottom:10px}
+.srclink{font-size:.75rem;color:var(--sub);word-break:break-all;border-top:1px dashed var(--line);margin-top:12px;padding-top:8px}
+.essay{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:22px 20px;margin-bottom:20px}
+.essay h2{font-size:1.15rem;color:var(--accent);margin:0 0 4px}
+.essay .from{font-size:.78rem;color:var(--sub);margin-bottom:14px}
+.essay h3{font-size:1rem;color:var(--accent2);margin:22px 0 6px}
+.essay p{font-size:.95rem}
+.essay .label{display:inline-block;font-size:.7rem;font-weight:700;color:var(--accent2);letter-spacing:.1em;margin-bottom:6px}
+footer{text-align:center;color:var(--sub);font-size:.75rem;padding:24px 16px 40px}
+.offline-badge{display:none;background:var(--accent2);color:#fff;text-align:center;font-size:.75rem;padding:4px}
+body.offline .offline-badge{display:block}
+.status{padding:24px 16px;color:var(--sub);font-size:.9rem;text-align:center}
+.status.error{color:var(--accent2)}
+</style>
+</head>
+<body>
+<div class="offline-badge">オフライン閲覧中(キャッシュ済み)</div>
+<header>
+<div class="headtext"><h1>✈ 機内ブリーフ</h1><div class="date" id="dateLabel">読み込み中...</div></div>
+<select id="daySelect" class="day-select"></select>
+</header>
+<nav id="nav"></nav>
+<main id="main"><p class="status">読み込み中...</p></main>
+<footer>OfflineBrief — Claudeが調査・執筆した解説を含みます。誤りを含む可能性があるため重要な判断には出典をご確認ください。</footer>
+<script src="./config.js"></script>
+<script>
+const CACHE_NAME = 'offlinebrief-data-v1';
+
+function esc(s){
+  return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function mdToHtml(text){
+  const lines = String(text||'').split('\n');
+  const out = [];
+  let inList = false;
+  function inline(s){
+    s = esc(s);
+    s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
+    return s;
+  }
+  for(const raw of lines){
+    const t = raw.trim();
+    if(t.startsWith('- ') || t.startsWith('・')){
+      if(!inList){ out.push('<ul>'); inList = true; }
+      out.push('<li>'+inline(t.replace(/^[-・]\s*/, ''))+'</li>');
+      continue;
+    }
+    if(inList){ out.push('</ul>'); inList = false; }
+    if(t.startsWith('### ')) out.push('<h4>'+inline(t.slice(4))+'</h4>');
+    else if(t.startsWith('## ')) out.push('<h3>'+inline(t.slice(3))+'</h3>');
+    else if(t.startsWith('# ')) out.push('<h3>'+inline(t.slice(2))+'</h3>');
+    else if(t) out.push('<p>'+inline(t)+'</p>');
+  }
+  if(inList) out.push('</ul>');
+  return out.join('\n');
+}
+
+function genreSectionHtml(g, day){
+  const slug = g.slug + '__' + day;
+  const cards = (g.sections||[]).map(s => {
+    const meta = s.meta || {};
+    const metaBits = [meta.source, meta.date].filter(Boolean).join(' / ');
+    const url = meta.url || '';
+    const srclink = url ? `<div class="srclink">出典: <a href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a>(オンライン時のみ)</div>` : '';
+    return `<article><h2>${esc(s.title)}</h2><div class="meta">${esc(metaBits)}</div>${mdToHtml(s.body)}${srclink}</article>`;
+  }).join('');
+  const ov = g.overview ? `<div class="overview"><strong>今日の概況</strong><br>${esc(g.overview)}</div>` : '';
+  return `<section id="${esc(slug)}">${ov}${cards}</section>`;
+}
+
+function essaysSectionHtml(g, day){
+  const slug = g.slug + '__' + day;
+  const blocks = (g.sections||[]).map(s => {
+    const meta = s.meta || {};
+    const frm = meta.from || '';
+    const frmHtml = frm ? `<div class="from">きっかけ: ${esc(frm)}</div>` : '';
+    return `<div class="essay"><span class="label">知的探究</span><h2>${esc(s.title)}</h2>${frmHtml}${mdToHtml(s.body)}</div>`;
+  }).join('');
+  return `<section id="${esc(slug)}">${blocks}</section>`;
+}
+
+function dayOptionLabel(day){
+  const [y,m,d] = day.split('-');
+  return `${y}年${parseInt(m,10)}月${parseInt(d,10)}日`;
+}
+
+async function cachePut(key, dataObj){
+  try{
+    const cache = await caches.open(CACHE_NAME);
+    await cache.put('https://offlinebrief.cache/'+key, new Response(JSON.stringify(dataObj), {headers:{'Content-Type':'application/json'}}));
+  }catch(e){ console.warn('cache put failed', e); }
+}
+async function cacheGet(key){
+  try{
+    const cache = await caches.open(CACHE_NAME);
+    const res = await cache.match('https://offlinebrief.cache/'+key);
+    if(!res) return null;
+    return await res.json();
+  }catch(e){ return null; }
+}
+
+async function fetchJson(url){
+  const res = await fetch(url, {cache:'no-store'});
+  if(!res.ok) throw new Error('HTTP '+res.status);
+  return res.json();
+}
+
+async function loadDayList(){
+  try{
+    const data = await fetchJson(GAS_URL);
+    if(data && data.ok && Array.isArray(data.days)){
+      await cachePut('__days__', data.days);
+      return data.days;
+    }
+    throw new Error('unexpected response');
+  }catch(e){
+    console.warn('day list fetch failed, falling back to cache', e);
+    const cached = await cacheGet('__days__');
+    return cached || [];
+  }
+}
+
+async function loadDayData(day){
+  try{
+    const data = await fetchJson(GAS_URL + '?date=' + encodeURIComponent(day));
+    if(data && data.ok !== false && data.genres){
+      await cachePut('day_'+day, data);
+      return data;
+    }
+    throw new Error('unexpected response');
+  }catch(e){
+    console.warn('day data fetch failed for '+day+', falling back to cache', e);
+    const cached = await cacheGet('day_'+day);
+    if(cached) return cached;
+    throw e;
+  }
+}
+
+function show(slug){
+  document.querySelectorAll('section').forEach(s=>s.classList.toggle('active', s.id===slug));
+  document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('active', a.dataset.slug===slug));
+  try{ localStorage.setItem('tab', slug); }catch(e){}
+  window.scrollTo(0,0);
+}
+
+function renderDay(day, data){
+  const genres = (data.genres||[]).slice().sort((a,b)=>a.order-b.order);
+  const navEl = document.getElementById('nav');
+  const mainEl = document.getElementById('main');
+  const dateLabel = document.getElementById('dateLabel');
+
+  dateLabel.textContent = dayOptionLabel(day) + '版';
+
+  const navHtml = [];
+  const sectionsHtml = [];
+  genres.forEach(g => {
+    const slug = g.slug + '__' + day;
+    navHtml.push(`<a href="#" data-slug="${esc(slug)}">${esc(g.genre)}</a>`);
+    sectionsHtml.push(g.slug === 'essays' ? essaysSectionHtml(g, day) : genreSectionHtml(g, day));
+  });
+  navEl.innerHTML = navHtml.join('');
+  mainEl.innerHTML = sectionsHtml.join('');
+
+  navEl.querySelectorAll('a').forEach(a => {
+    a.onclick = (e) => { e.preventDefault(); show(a.dataset.slug); };
+  });
+
+  let initTab = '';
+  try{ initTab = localStorage.getItem('tab') || ''; }catch(e){}
+  const candidate = initTab && navEl.querySelector(`a[data-slug="${initTab}"]`);
+  const firstSlug = navEl.querySelector('a') ? navEl.querySelector('a').dataset.slug : null;
+  show(candidate ? initTab : firstSlug);
+}
+
+async function selectDay(day){
+  try{ localStorage.setItem('activeDay', day); }catch(e){}
+  const sel = document.getElementById('daySelect');
+  if(sel && sel.value !== day) sel.value = day;
+  document.getElementById('main').innerHTML = '<p class="status">読み込み中...</p>';
+  try{
+    const data = await loadDayData(day);
+    renderDay(day, data);
+  }catch(e){
+    document.getElementById('main').innerHTML = `<p class="status error">この日のデータを取得できませんでした。オンライン時に一度このアプリを開いて同期してください。<br>(${esc(e.message||e)})</p>`;
+  }
+}
+
+async function init(){
+  const days = await loadDayList();
+  const sel = document.getElementById('daySelect');
+  if(!days.length){
+    document.getElementById('main').innerHTML = '<p class="status error">データがまだありません。オンライン時に一度開いて同期してください。</p>';
+    return;
+  }
+  sel.innerHTML = days.map(d => `<option value="${d}">${esc(dayOptionLabel(d))}</option>`).join('');
+  sel.addEventListener('change', () => selectDay(sel.value));
+
+  let initDay = '';
+  try{ initDay = localStorage.getItem('activeDay') || ''; }catch(e){}
+  if(days.indexOf(initDay) === -1) initDay = days[0];
+  await selectDay(initDay);
+}
+
+function updateNet(){ document.body.classList.toggle('offline', !navigator.onLine); }
+window.addEventListener('online', updateNet);
+window.addEventListener('offline', updateNet);
+updateNet();
+
+if('serviceWorker' in navigator){ navigator.serviceWorker.register('./sw.js'); }
+
+init();
+</script>
+</body>
+</html>
