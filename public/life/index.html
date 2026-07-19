@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ライフログ</title>
+<meta name="theme-color" content="#2e6e4e">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./icon-192.png">
+<style>
+:root{--bg:#faf8f4;--card:#ffffff;--ink:#1e2430;--sub:#5c6470;--accent:#2e6e4e;--accent2:#b3541e;--line:#e5e0d8;--tag:#eef6f0;--danger:#b3372e}
+@media(prefers-color-scheme:dark){:root{--bg:#14171c;--card:#1d2129;--ink:#e8e6e1;--sub:#9aa2ad;--accent:#7fc5a2;--accent2:#e0956a;--line:#2c313a;--tag:#20302a;--danger:#e08a84}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Hiragino Sans","Yu Gothic",'Noto Sans JP',sans-serif;line-height:1.7;-webkit-text-size-adjust:100%}
+header{background:var(--accent);color:#fff;padding:16px 16px 10px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+header h1{margin:0;font-size:1.15rem;letter-spacing:.06em}
+header .sync{font-size:.72rem;opacity:.85;margin-top:2px}
+.gear{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.5);border-radius:8px;padding:6px 10px;font-size:.8rem}
+nav{position:sticky;top:0;background:var(--card);border-bottom:1px solid var(--line);display:flex;z-index:10}
+nav a{flex:1 1 0;text-align:center;padding:11px 8px;text-decoration:none;color:var(--sub);font-size:.9rem;font-weight:600;border-bottom:3px solid transparent}
+nav a.active{color:var(--accent);border-bottom-color:var(--accent)}
+main{max-width:720px;margin:0 auto;padding:14px 14px 40px}
+section{display:none}section.active{display:block}
+h2{font-size:.95rem;color:var(--accent);margin:20px 0 8px;letter-spacing:.04em}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px}
+.offline-badge{display:none;background:var(--accent2);color:#fff;text-align:center;font-size:.75rem;padding:4px}
+body.offline .offline-badge{display:block}
+.status{padding:24px 12px;color:var(--sub);font-size:.9rem;text-align:center}
+.status.error{color:var(--danger)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+input[type=text],input[type=date],textarea,select{width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:16px;font-family:inherit}
+textarea{min-height:72px;resize:vertical}
+button{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px 14px;font-size:.85rem;font-weight:600;font-family:inherit}
+button.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent);padding:6px 10px;font-size:.75rem}
+button.warn{background:transparent;color:var(--danger);border:1px solid var(--danger);padding:6px 10px;font-size:.75rem}
+button:disabled{opacity:.5}
+.item{display:flex;gap:10px;align-items:flex-start;padding:10px 2px;border-bottom:1px dashed var(--line)}
+.item:last-child{border-bottom:none}
+.item input[type=checkbox]{width:22px;height:22px;margin-top:3px;accent-color:var(--accent);flex:0 0 auto}
+.item .body{flex:1 1 auto;min-width:0}
+.item .title{font-size:.95rem;word-break:break-word;white-space:pre-wrap}
+.item.done .title{text-decoration:line-through;color:var(--sub)}
+.badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:3px}
+.badge{font-size:.68rem;padding:1px 8px;border-radius:99px;background:var(--tag);color:var(--sub)}
+.badge.overdue{background:var(--danger);color:#fff}
+.badge.today{background:var(--accent2);color:#fff}
+.badge.hi{background:var(--accent);color:#fff}
+.actions{display:flex;gap:6px;flex:0 0 auto;flex-direction:column;align-items:flex-end}
+.ev{display:flex;gap:10px;padding:7px 2px;border-bottom:1px dashed var(--line);font-size:.9rem}
+.ev:last-child{border-bottom:none}
+.ev .time{flex:0 0 88px;color:var(--accent2);font-weight:600;font-size:.82rem;padding-top:2px}
+.ev .loc{color:var(--sub);font-size:.78rem}
+.dayhead{font-size:.8rem;font-weight:700;color:var(--sub);margin:12px 0 2px}
+details{margin-top:8px}
+summary{font-size:.85rem;color:var(--sub);font-weight:600;cursor:pointer}
+.memo-date{font-size:.72rem;color:var(--sub);margin-top:2px}
+.empty{color:var(--sub);font-size:.85rem;padding:6px 2px}
+#settings{display:none;max-width:720px;margin:0 auto;padding:14px}
+body.setup #settings{display:block}
+body.setup nav, body.setup main{display:none}
+label{font-size:.8rem;color:var(--sub);font-weight:600;display:block;margin:12px 0 4px}
+footer{text-align:center;color:var(--sub);font-size:.72rem;padding:20px 16px 40px}
+</style>
+</head>
+<body>
+<div class="offline-badge">オフライン — 閲覧はキャッシュ、追加・変更は再接続時に自動送信</div>
+<header>
+<div><h1>🗂 ライフログ</h1><div class="sync" id="syncLabel">読み込み中...</div></div>
+<button class="gear" id="gearBtn">⚙ 設定</button>
+</header>
+
+<div id="settings">
+<div class="card">
+<h2 style="margin-top:4px">初回設定</h2>
+<p style="font-size:.85rem">LifeLog GAS Web AppのURLとトークンを入力してください(この端末のlocalStorageにのみ保存されます)。デプロイ方法はリポジトリの <code>scripts/gas-life/DEPLOY.md</code> を参照。</p>
+<label>GAS Web App URL (https://script.google.com/macros/s/.../exec)</label>
+<input type="text" id="setUrl" placeholder="https://script.google.com/macros/s/.../exec">
+<label>トークン (LIFELOG_TOKEN)</label>
+<input type="text" id="setToken" placeholder="スクリプトプロパティに設定した値">
+<div class="row" style="margin-top:14px">
+<button id="saveSettings">保存して接続</button>
+<button class="ghost" id="cancelSettings" style="display:none">キャンセル</button>
+</div>
+<p class="status error" id="settingsMsg" style="display:none"></p>
+</div>
+</div>
+
+<nav>
+<a href="#" data-tab="today" class="active">今日</a>
+<a href="#" data-tab="todo">ToDo</a>
+<a href="#" data-tab="memo">メモ</a>
+</nav>
+<main>
+<section id="tab-today" class="active">
+<div class="card">
+<div class="row">
+<input type="text" id="quickText" placeholder="思いついたことをすぐ記録...">
+</div>
+<div class="row" style="margin-top:8px">
+<button id="quickMemo">メモに保存</button>
+<button class="ghost" id="quickTask">ToDoに追加</button>
+</div>
+</div>
+<div id="todayContent"><p class="status">読み込み中...</p></div>
+</section>
+<section id="tab-todo">
+<div class="card">
+<input type="text" id="taskTitle" placeholder="やること...">
+<div class="row" style="margin-top:8px">
+<input type="date" id="taskDue" style="flex:1 1 130px;width:auto">
+<select id="taskPriority" style="flex:1 1 90px;width:auto">
+<option value="normal">通常</option>
+<option value="high">重要</option>
+<option value="low">低</option>
+</select>
+<button id="addTask">追加</button>
+</div>
+</div>
+<div id="todoContent"><p class="status">読み込み中...</p></div>
+</section>
+<section id="tab-memo">
+<div class="card">
+<textarea id="memoText" placeholder="メモ・アイデア・気になったこと..."></textarea>
+<div class="row" style="margin-top:8px"><button id="addMemo">保存</button></div>
+</div>
+<div id="memoContent"><p class="status">読み込み中...</p></div>
+</section>
+</main>
+<footer>LifeLog — Claudeと共同管理。整理・分類はチャットで「メモを整理して」と依頼。</footer>
+<script src="./config.js"></script>
+<script>
+const CACHE_NAME = 'lifelog-data-v1';
+const LS = {url:'life.gasUrl', token:'life.token', pending:'life.pending', tab:'life.tab'};
+
+let payload = null;        // {state:{tasks,memos,...}, calendar:{events:[...]}}
+let syncing = false;
+
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function lsGet(k,d){try{return localStorage.getItem(k)??d;}catch(e){return d;}}
+function lsSet(k,v){try{localStorage.setItem(k,v);}catch(e){}}
+function genId(p){return p+'-'+Date.now().toString(36)+'-'+Math.floor(Math.random()*1e8).toString(36);}
+function nowIso(){return new Date().toISOString();}
+function localYMD(d){const x=d||new Date();return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0');}
+const WD=['日','月','火','水','木','金','土'];
+function fmtDay(ymd){const [y,m,d]=ymd.split('-').map(Number);const dt=new Date(y,m-1,d);const t=localYMD();if(ymd===t)return '今日 '+m+'/'+d+'('+WD[dt.getDay()]+')';const tm=localYMD(new Date(Date.now()+86400000));if(ymd===tm)return '明日 '+m+'/'+d+'('+WD[dt.getDay()]+')';return m+'/'+d+'('+WD[dt.getDay()]+')';}
+function fmtHM(iso){const d=new Date(iso);return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}
+
+// ---------- 設定 ----------
+function getConf(){
+  let url=lsGet(LS.url,'')||'';
+  let token=lsGet(LS.token,'')||'';
+  if(!url && typeof GAS_LIFE_URL!=='undefined' && GAS_LIFE_URL) url=GAS_LIFE_URL;
+  return {url,token};
+}
+function needSetup(){const c=getConf();return !c.url||!c.token;}
+function openSettings(cancelable){
+  document.body.classList.add('setup');
+  const c=getConf();
+  document.getElementById('setUrl').value=c.url;
+  document.getElementById('setToken').value=c.token;
+  document.getElementById('cancelSettings').style.display=cancelable?'':'none';
+}
+document.getElementById('gearBtn').onclick=()=>openSettings(!needSetup());
+document.getElementById('cancelSettings').onclick=()=>document.body.classList.remove('setup');
+document.getElementById('saveSettings').onclick=async()=>{
+  const url=document.getElementById('setUrl').value.trim();
+  const token=document.getElementById('setToken').value.trim();
+  const msg=document.getElementById('settingsMsg');
+  if(!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(url)){
+    msg.textContent='URLは https://script.google.com/macros/s/.../exec 形式で入力してください(googleusercontent.comのURLは不可)';
+    msg.style.display='';return;
+  }
+  msg.textContent='接続確認中...';msg.style.display='';
+  try{
+    const r=await fetch(url+'?token='+encodeURIComponent(token)+'&action=ping',{cache:'no-store'});
+    const j=await r.json();
+    if(!j.ok) throw new Error(j.error||'認証エラー');
+  }catch(e){
+    msg.textContent='接続確認に失敗: '+(e.message||e)+' (オフラインの場合はオンライン時に再設定してください)';
+    return;
+  }
+  lsSet(LS.url,url);lsSet(LS.token,token);
+  msg.style.display='none';
+  document.body.classList.remove('setup');
+  sync();
+};
+
+// ---------- キャッシュ ----------
+async function cachePut(obj){try{const c=await caches.open(CACHE_NAME);await c.put('https://lifelog.cache/payload',new Response(JSON.stringify(obj),{headers:{'Content-Type':'application/json'}}));}catch(e){}}
+async function cacheGet(){try{const c=await caches.open(CACHE_NAME);const r=await c.match('https://lifelog.cache/payload');return r?await r.json():null;}catch(e){return null;}}
+
+// ---------- 未送信キュー ----------
+function getPending(){try{return JSON.parse(lsGet(LS.pending,'[]'))||[];}catch(e){return [];}}
+function setPending(a){lsSet(LS.pending,JSON.stringify(a));}
+
+// ---------- ローカル適用(サーバのapplyMutation_と同等のサブセット) ----------
+function applyLocal(state,m){
+  const find=(arr,id)=>arr.findIndex(x=>x.id===id);
+  if(!state.tasks)state.tasks=[];if(!state.memos)state.memos=[];
+  let i;
+  switch(m.op){
+    case 'add_task':{const t=m.task||{};if(!t.title)return;
+      const task={id:t.id||genId('t'),title:t.title,status:'open',due:t.due||'',priority:t.priority||'normal',project:t.project||'',tags:t.tags||[],notes:t.notes||'',createdAt:t.createdAt||nowIso(),completedAt:''};
+      i=find(state.tasks,task.id);if(i>=0)state.tasks[i]=task;else state.tasks.push(task);break;}
+    case 'update_task':i=find(state.tasks,m.id);if(i>=0)Object.keys(m.patch||{}).forEach(k=>{if(k!=='id')state.tasks[i][k]=m.patch[k];});break;
+    case 'complete_task':i=find(state.tasks,m.id);if(i>=0){state.tasks[i].status='done';state.tasks[i].completedAt=nowIso();}break;
+    case 'reopen_task':i=find(state.tasks,m.id);if(i>=0){state.tasks[i].status='open';state.tasks[i].completedAt='';}break;
+    case 'delete_task':i=find(state.tasks,m.id);if(i>=0)state.tasks.splice(i,1);break;
+    case 'add_memo':{const mm=m.memo||{};if(!mm.text)return;
+      const memo={id:mm.id||genId('m'),text:mm.text,status:mm.status||'inbox',category:mm.category||'',tags:mm.tags||[],createdAt:mm.createdAt||nowIso()};
+      i=find(state.memos,memo.id);if(i>=0)state.memos[i]=memo;else state.memos.push(memo);break;}
+    case 'update_memo':i=find(state.memos,m.id);if(i>=0)Object.keys(m.patch||{}).forEach(k=>{if(k!=='id')state.memos[i][k]=m.patch[k];});break;
+    case 'delete_memo':i=find(state.memos,m.id);if(i>=0)state.memos.splice(i,1);break;
+  }
+}
+
+// ---------- 変更の投入 ----------
+function mutate(muts){
+  const pending=getPending();
+  muts.forEach(m=>pending.push(m));
+  setPending(pending);
+  if(payload&&payload.state)muts.forEach(m=>applyLocal(payload.state,m));
+  render();
+  sync();
+}
+
+// ---------- 同期 ----------
+function setSyncLabel(){
+  const el=document.getElementById('syncLabel');
+  const n=getPending().length;
+  const upd=payload&&payload.state&&payload.state.updatedAt?new Date(payload.state.updatedAt):null;
+  let s=upd?('同期: '+(upd.getMonth()+1)+'/'+upd.getDate()+' '+fmtHM(upd.toISOString())):'未同期';
+  if(n>0)s+=' / 未送信'+n+'件';
+  if(syncing)s+=' / 同期中...';
+  el.textContent=s;
+}
+async function sync(){
+  if(syncing||needSetup()||!navigator.onLine)return;
+  syncing=true;setSyncLabel();
+  const {url,token}=getConf();
+  const batch=getPending();
+  try{
+    let j;
+    if(batch.length){
+      const r=await fetch(url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({token,mutations:batch})});
+      j=await r.json();
+      if(!j.ok)throw new Error(j.error||'server error');
+      // 送信済み分だけキューから除去(送信中に追加された分は残す)
+      setPending(getPending().slice(batch.length));
+    }else{
+      const r=await fetch(url+'?token='+encodeURIComponent(token),{cache:'no-store'});
+      j=await r.json();
+      if(!j.ok)throw new Error(j.error||'server error');
+    }
+    payload=j;
+    // サーバ反映後も、まだ未送信のキューがあればローカル適用して表示
+    getPending().forEach(m=>applyLocal(payload.state,m));
+    await cachePut(j);
+    if(getPending().length)return void(syncing=false,setSyncLabel(),render(),sync());
+  }catch(e){
+    console.warn('sync failed',e);
+  }
+  syncing=false;setSyncLabel();render();
+}
+
+// ---------- 描画 ----------
+function taskBadges(t){
+  const today=localYMD();
+  const b=[];
+  if(t.due){
+    if(t.status==='open'&&t.due<today)b.push('<span class="badge overdue">期限切れ '+esc(fmtDay(t.due))+'</span>');
+    else if(t.due===today)b.push('<span class="badge today">今日</span>');
+    else b.push('<span class="badge">'+esc(fmtDay(t.due))+'</span>');
+  }
+  if(t.priority==='high')b.push('<span class="badge hi">重要</span>');
+  if(t.priority==='low')b.push('<span class="badge">低</span>');
+  if(t.project)b.push('<span class="badge">'+esc(t.project)+'</span>');
+  (t.tags||[]).forEach(x=>b.push('<span class="badge">#'+esc(x)+'</span>'));
+  return b.length?'<div class="badges">'+b.join('')+'</div>':'';
+}
+function taskItemHtml(t){
+  const done=t.status==='done';
+  return '<div class="item'+(done?' done':'')+'" data-id="'+esc(t.id)+'">'
+    +'<input type="checkbox" '+(done?'checked':'')+' data-act="'+(done?'reopen':'complete')+'" data-id="'+esc(t.id)+'">'
+    +'<div class="body"><div class="title">'+esc(t.title)+'</div>'+taskBadges(t)
+    +(t.notes?'<div class="memo-date">'+esc(t.notes)+'</div>':'')+'</div>'
+    +'<div class="actions"><button class="warn" data-act="delTask" data-id="'+esc(t.id)+'">削除</button></div></div>';
+}
+function taskSortKey(t){return [(t.due||'9999-99-99'),(t.priority==='high'?0:t.priority==='normal'?1:2),t.createdAt];}
+function sortTasks(arr){return arr.slice().sort((a,b)=>{const ka=taskSortKey(a),kb=taskSortKey(b);return ka<kb?-1:ka>kb?1:0;});}
+
+function renderToday(){
+  const el=document.getElementById('todayContent');
+  if(!payload){el.innerHTML='<p class="status">まだデータがありません。オンライン時に一度開いて同期してください。</p>';return;}
+  const today=localYMD();
+  const tasks=(payload.state.tasks||[]).filter(t=>t.status==='open'&&t.due&&t.due<=today);
+  const evs=(payload.calendar&&payload.calendar.events||[]).slice().sort((a,b)=>a.start<b.start?-1:1);
+  const byDay={};
+  evs.forEach(e=>{const d=localYMD(new Date(e.start));if(d>=today)(byDay[d]=byDay[d]||[]).push(e);});
+  const days=Object.keys(byDay).sort();
+  let h='';
+  h+='<h2>今日・期限切れのToDo</h2><div class="card">';
+  h+=tasks.length?sortTasks(tasks).map(taskItemHtml).join(''):'<div class="empty">期限が来ているToDoはありません 🎉</div>';
+  h+='</div>';
+  h+='<h2>予定(今後14日)</h2><div class="card">';
+  if(!days.length)h+='<div class="empty">予定はありません'+(payload.calendar&&payload.calendar.ok===false?'(カレンダー未接続: GAS側で権限承認が必要です)':'')+'</div>';
+  days.forEach(d=>{
+    h+='<div class="dayhead">'+esc(fmtDay(d))+'</div>';
+    byDay[d].forEach(e=>{
+      const time=e.allDay?'終日':fmtHM(e.start)+'–'+fmtHM(e.end);
+      h+='<div class="ev"><div class="time">'+esc(time)+'</div><div><div>'+esc(e.title)+'</div>'+(e.location?'<div class="loc">📍'+esc(e.location)+'</div>':'')+'</div></div>';
+    });
+  });
+  h+='</div>';
+  el.innerHTML=h;
+}
+
+function renderTodo(){
+  const el=document.getElementById('todoContent');
+  if(!payload){el.innerHTML='<p class="status">まだデータがありません。</p>';return;}
+  const today=localYMD();
+  const open=(payload.state.tasks||[]).filter(t=>t.status==='open');
+  const done=(payload.state.tasks||[]).filter(t=>t.status==='done').sort((a,b)=>a.completedAt<b.completedAt?1:-1).slice(0,30);
+  const g={overdue:[],today:[],later:[],nodue:[]};
+  open.forEach(t=>{if(!t.due)g.nodue.push(t);else if(t.due<today)g.overdue.push(t);else if(t.due===today)g.today.push(t);else g.later.push(t);});
+  const sec=(title,arr)=>arr.length?'<h2>'+title+'('+arr.length+')</h2><div class="card">'+sortTasks(arr).map(taskItemHtml).join('')+'</div>':'';
+  let h=sec('期限切れ',g.overdue)+sec('今日',g.today)+sec('今後',g.later)+sec('期限なし',g.nodue);
+  if(!open.length)h+='<p class="status">未完了のToDoはありません 🎉</p>';
+  if(done.length){
+    h+='<details><summary>完了済み('+done.length+')</summary><div class="card" style="margin-top:8px">'+done.map(taskItemHtml).join('')+'</div></details>';
+  }
+  el.innerHTML=h;
+}
+
+function memoItemHtml(m,organized){
+  return '<div class="item" data-id="'+esc(m.id)+'"><div class="body"><div class="title">'+esc(m.text)+'</div>'
+    +'<div class="memo-date">'+esc(fmtDay(localYMD(new Date(m.createdAt))))+(m.category?' / '+esc(m.category):'')+((m.tags||[]).length?' / #'+m.tags.map(esc).join(' #'):'')+'</div></div>'
+    +'<div class="actions">'
+    +(organized?'':'<button class="ghost" data-act="memoToTask" data-id="'+esc(m.id)+'">ToDo化</button>')
+    +'<button class="ghost" data-act="archiveMemo" data-id="'+esc(m.id)+'">'+(organized?'アーカイブ':'済')+'</button>'
+    +'<button class="warn" data-act="delMemo" data-id="'+esc(m.id)+'">削除</button>'
+    +'</div></div>';
+}
+function renderMemo(){
+  const el=document.getElementById('memoContent');
+  if(!payload){el.innerHTML='<p class="status">まだデータがありません。</p>';return;}
+  const memos=(payload.state.memos||[]).slice().sort((a,b)=>a.createdAt<b.createdAt?1:-1);
+  const inbox=memos.filter(m=>m.status==='inbox');
+  const org=memos.filter(m=>m.status==='organized');
+  const arch=memos.filter(m=>m.status==='archived');
+  let h='<h2>未整理('+inbox.length+')</h2><div class="card">';
+  h+=inbox.length?inbox.map(m=>memoItemHtml(m,false)).join(''):'<div class="empty">未整理のメモはありません。Claudeに「メモを整理して」と頼むとここが片付きます。</div>';
+  h+='</div>';
+  if(org.length){
+    const cats={};org.forEach(m=>{(cats[m.category||'その他']=cats[m.category||'その他']||[]).push(m);});
+    h+='<h2>整理済み('+org.length+')</h2>';
+    Object.keys(cats).sort().forEach(c=>{
+      h+='<details open><summary>'+esc(c)+'('+cats[c].length+')</summary><div class="card" style="margin-top:8px">'+cats[c].map(m=>memoItemHtml(m,true)).join('')+'</div></details>';
+    });
+  }
+  if(arch.length)h+='<details><summary>アーカイブ('+arch.length+')</summary><div class="card" style="margin-top:8px">'+arch.map(m=>memoItemHtml(m,true)).join('')+'</div></details>';
+  el.innerHTML=h;
+}
+
+function render(){renderToday();renderTodo();renderMemo();setSyncLabel();}
+
+// ---------- 操作イベント ----------
+document.querySelector('main').addEventListener('click',e=>{
+  const t=e.target;
+  const act=t.dataset&&t.dataset.act;
+  if(!act)return;
+  const id=t.dataset.id;
+  if(act==='complete')mutate([{op:'complete_task',id}]);
+  else if(act==='reopen')mutate([{op:'reopen_task',id}]);
+  else if(act==='delTask'){if(confirm('このToDoを削除しますか?'))mutate([{op:'delete_task',id}]);}
+  else if(act==='delMemo'){if(confirm('このメモを削除しますか?'))mutate([{op:'delete_memo',id}]);}
+  else if(act==='archiveMemo'){
+    const m=(payload.state.memos||[]).find(x=>x.id===id);
+    const next=m&&m.status==='inbox'?'organized':'archived';
+    mutate([{op:'update_memo',id,patch:{status:next}}]);
+  }
+  else if(act==='memoToTask'){
+    const m=(payload.state.memos||[]).find(x=>x.id===id);
+    if(!m)return;
+    mutate([
+      {op:'add_task',task:{id:genId('t'),title:m.text}},
+      {op:'update_memo',id,patch:{status:'organized',category:'ToDo化済み'}}
+    ]);
+  }
+});
+document.getElementById('quickMemo').onclick=()=>{
+  const el=document.getElementById('quickText');const v=el.value.trim();if(!v)return;
+  mutate([{op:'add_memo',memo:{id:genId('m'),text:v}}]);el.value='';
+};
+document.getElementById('quickTask').onclick=()=>{
+  const el=document.getElementById('quickText');const v=el.value.trim();if(!v)return;
+  mutate([{op:'add_task',task:{id:genId('t'),title:v}}]);el.value='';
+};
+document.getElementById('addTask').onclick=()=>{
+  const title=document.getElementById('taskTitle').value.trim();if(!title)return;
+  mutate([{op:'add_task',task:{id:genId('t'),title,due:document.getElementById('taskDue').value||'',priority:document.getElementById('taskPriority').value}}]);
+  document.getElementById('taskTitle').value='';document.getElementById('taskDue').value='';document.getElementById('taskPriority').value='normal';
+};
+document.getElementById('addMemo').onclick=()=>{
+  const el=document.getElementById('memoText');const v=el.value.trim();if(!v)return;
+  mutate([{op:'add_memo',memo:{id:genId('m'),text:v}}]);el.value='';
+};
+
+// ---------- タブ ----------
+document.querySelectorAll('nav a').forEach(a=>{
+  a.onclick=e=>{e.preventDefault();
+    document.querySelectorAll('nav a').forEach(x=>x.classList.toggle('active',x===a));
+    document.querySelectorAll('main section').forEach(s=>s.classList.toggle('active',s.id==='tab-'+a.dataset.tab));
+    lsSet(LS.tab,a.dataset.tab);window.scrollTo(0,0);
+  };
+});
+const savedTab=lsGet(LS.tab,'today');
+const tabLink=document.querySelector('nav a[data-tab="'+savedTab+'"]');
+if(tabLink)tabLink.onclick({preventDefault:()=>{}});
+
+// ---------- 起動 ----------
+function updateNet(){document.body.classList.toggle('offline',!navigator.onLine);if(navigator.onLine)sync();}
+window.addEventListener('online',updateNet);
+window.addEventListener('offline',updateNet);
+if('serviceWorker' in navigator){navigator.serviceWorker.register('./sw.js');}
+
+(async function init(){
+  payload=await cacheGet();
+  if(payload&&payload.state)getPending().forEach(m=>applyLocal(payload.state,m));
+  render();
+  updateNet();
+  if(needSetup())openSettings(false);
+  else sync();
+})();
+</script>
+</body>
+</html>

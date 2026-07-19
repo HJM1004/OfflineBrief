@@ -124,6 +124,72 @@ order: 2
 - `slug: essays` のブロックは知的探究タブとして表示され、`## ` がエッセイ1本の区切り。メタは `- from: きっかけのニュース` のみ
 - 本文で使えるMarkdown: `## / ###` 見出し、`**強調**`、`- 箇条書き`、`[リンク](url)`、段落(空行区切り)
 
+## ライフログ(予定・ToDo・メモ)アシスタント — 2026年7月〜
+
+ニュースブリーフとは別に、このリポジトリには「予定・ToDo・メモ管理アシスタント」(LifeLog)も
+含まれる。ユーザーが予定・やること・思いつきについて話したら、Claudeは以下のプロトコルで動く。
+
+### 構成
+
+- **予定**: Googleカレンダー本体をGoogle Calendar連携ツール(`list_events`/`create_event`/
+  `update_event`/`delete_event`/`suggest_time`)で直接読み書きする。独自の予定データは持たない
+- **ToDo・メモの正本**: Driveの `LifeLog/state.json`(タスク配列+メモ配列)。
+  このファイルを更新するのは**LifeLog用GAS Web App**(`scripts/gas-life/Code.gs`、
+  OfflineBriefとは別プロジェクトとしてデプロイ)だけ
+- **Claudeからの書き込み**: DriveツールはファイルのUPDATEができない(create/read/searchのみ)ため、
+  Claudeは `LifeLog/inbox/` にミューテーションJSONを`create_file`で置く(下記形式)。
+  GASがdoGet/doPostのたびにinboxを取り込み、`state.json`に適用して `LifeLog/processed/` へ移動する
+- **PWA**: `public/life/`(GitHub Pages `/life/`)。閲覧+スマホからの直接入力(GAS doPost)。
+  オフラインではキャッシュ閲覧+未送信キューに書き溜めて再接続時に自動送信
+- **認証**: GASのスクリプトプロパティ `LIFELOG_TOKEN`。`.env`(リポジトリ直下、gitignore済み)に
+  `GAS_LIFE_URL=...` と `LIFELOG_TOKEN=...` がある想定。無ければ `scripts/gas-life/DEPLOY.md` の
+  手順でユーザーにデプロイしてもらう
+
+### Claudeの読み取り手順
+
+最新状態は **WebFetchツール**で `GAS_LIFE_URL?token=LIFELOG_TOKEN` をGETして取得する
+(inbox取り込み済みのstate+カレンダー14日分が返る。bashのcurlはGoogle系ドメイン不可)。
+WebFetchが使えない場合の代替: Driveツールで `LifeLog/state.json` を読む(+`LifeLog/inbox/`に
+未処理ファイルがないか確認)。カレンダーはGoogle Calendarツールで直接読む。
+
+### Claudeの書き込み手順(ToDo・メモ)
+
+1. ミューテーションJSONを組み立てる:
+   ```json
+   {"mutations": [
+     {"op": "add_task", "task": {"id": "t-<ユニーク値>", "title": "...", "due": "YYYY-MM-DD", "priority": "high|normal|low", "project": "", "tags": [], "notes": ""}},
+     {"op": "complete_task", "id": "t-..."},
+     {"op": "update_task", "id": "t-...", "patch": {"due": "..."}},
+     {"op": "delete_task", "id": "t-..."},
+     {"op": "add_memo", "memo": {"id": "m-<ユニーク値>", "text": "...", "category": "", "tags": []}},
+     {"op": "update_memo", "id": "m-...", "patch": {"status": "organized", "category": "アイデア"}},
+     {"op": "delete_memo", "id": "m-..."}
+   ]}
+   ```
+   - add系は自分で `id` を生成して入れる(例: `t-20260719-a1b2`)。同じidの再投入は上書きになる
+     ため二重取り込みされても安全
+   - メモの `status`: `inbox`(未整理)→`organized`(整理済み)→`archived`
+2. Driveツール`create_file`で `LifeLog/inbox/` フォルダに
+   `YYYYMMDD-HHMMSS_claude.json`(タイムスタンプ順に処理される)として保存。
+   `contentMimeType: "application/json"`、`disable_conversion_to_google_type: true` を指定
+3. WebFetchで `GAS_LIFE_URL?token=...` をGETし、inboxが取り込まれて反映されたことを確認する
+   (このGET自体が取り込みのトリガーになる)
+
+### アシスタントとしての振る舞い
+
+- **予定の相談**(「来週の空きは?」「◯◯を入れて」)→ Calendarツールで直接操作。日時・所要時間が
+  曖昧なら確認してから登録する
+- **やることの発生**(「〜しなきゃ」「あとで〜する」)→ add_taskへ。期限・優先度を会話から推定し、
+  推定したことを明示する
+- **思いつき・アイデア**→ add_memoへ。そのまま書き、勝手に要約しすぎない
+- **「メモを整理して」**→ inboxステータスのメモを読み、(1)実はタスクならadd_task化して
+  update_memoでorganized+カテゴリ付与、(2)アイデア・参考情報ならカテゴリ(自由語彙: アイデア/
+  仕事/読みたい/買う物 など)とタグを付けてorganizedに、(3)不要と思われるものは勝手に消さず
+  ユーザーに提案する
+- **「今日のまとめ」「朝のブリーフ」**→ カレンダー+期限切れ・今日のタスク+未整理メモ件数を
+  まとめて提示し、今日の段取りを提案する
+- ToDo・メモの日常操作でgit操作は不要。`public/life/`や`scripts/gas-life/`のコード変更時のみコミット
+
 ## 注意
 
 - 過去分(2026-07-05〜2026-07-09)は`content/`にMarkdownとして残っている。`content/`はもうgit管理の対象外(.gitignore済み)。ローカルでの下書き・検証用の作業場所として使ってよいが、コミットはしない
